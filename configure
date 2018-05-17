@@ -583,7 +583,7 @@ PACKAGE_BUGREPORT=
 PACKAGE_URL=
 
 ac_unique_file="smlsharp"
-ac_unique_file="src/compiler/toplevel2/main/Top.sml"
+ac_unique_file="src/compiler/compilePhases/toplevel/main/Top.sml"
 # Factoring default headers for most tests.
 ac_includes_default="\
 #include <stdio.h>
@@ -710,6 +710,7 @@ infodir
 docdir
 oldincludedir
 includedir
+runstatedir
 localstatedir
 sharedstatedir
 sysconfdir
@@ -738,6 +739,9 @@ enable_rpath
 with_stage0
 with_yajl_s
 with_rt
+with_pthread
+with_massivethreads
+enable_concurrentgc
 '
       ac_precious_vars='build_alias
 host_alias
@@ -789,6 +793,7 @@ datadir='${datarootdir}'
 sysconfdir='${prefix}/etc'
 sharedstatedir='${prefix}/com'
 localstatedir='${prefix}/var'
+runstatedir='${localstatedir}/run'
 includedir='${prefix}/include'
 oldincludedir='/usr/include'
 docdir='${datarootdir}/doc/${PACKAGE}'
@@ -1041,6 +1046,15 @@ do
   | -silent | --silent | --silen | --sile | --sil)
     silent=yes ;;
 
+  -runstatedir | --runstatedir | --runstatedi | --runstated \
+  | --runstate | --runstat | --runsta | --runst | --runs \
+  | --run | --ru | --r)
+    ac_prev=runstatedir ;;
+  -runstatedir=* | --runstatedir=* | --runstatedi=* | --runstated=* \
+  | --runstate=* | --runstat=* | --runsta=* | --runst=* | --runs=* \
+  | --run=* | --ru=* | --r=*)
+    runstatedir=$ac_optarg ;;
+
   -sbindir | --sbindir | --sbindi | --sbind | --sbin | --sbi | --sb)
     ac_prev=sbindir ;;
   -sbindir=* | --sbindir=* | --sbindi=* | --sbind=* | --sbin=* \
@@ -1178,7 +1192,7 @@ fi
 for ac_var in	exec_prefix prefix bindir sbindir libexecdir datarootdir \
 		datadir sysconfdir sharedstatedir localstatedir includedir \
 		oldincludedir docdir infodir htmldir dvidir pdfdir psdir \
-		libdir localedir mandir
+		libdir localedir mandir runstatedir
 do
   eval ac_val=\$$ac_var
   # Remove trailing slashes.
@@ -1331,6 +1345,7 @@ Fine tuning of the installation directories:
   --sysconfdir=DIR        read-only single-machine data [PREFIX/etc]
   --sharedstatedir=DIR    modifiable architecture-independent data [PREFIX/com]
   --localstatedir=DIR     modifiable single-machine data [PREFIX/var]
+  --runstatedir=DIR       modifiable per-process data [LOCALSTATEDIR/run]
   --libdir=DIR            object code libraries [EPREFIX/lib]
   --includedir=DIR        C header files [PREFIX/include]
   --oldincludedir=DIR     C header files for non-gcc [/usr/include]
@@ -1369,6 +1384,7 @@ Optional Features:
   --disable-FEATURE       do not include FEATURE (same as --enable-FEATURE=no)
   --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
   --disable-rpath         do not specify RPATH
+  --disable-concurrentgc  disable concurrent GC (experimental)
 
 Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
@@ -1380,6 +1396,9 @@ Optional Packages:
                           work)
   --with-yajl_s           use libyajl_s instead of libyajl
   --with-rt               try to use clock_gettime for benchmark
+  --without-pthread       disable pthread support (experimental)
+  --without-massivethreads
+                          use pthread instead of massivethreads
 
 Some influential environment variables:
   CC          C compiler command
@@ -6082,7 +6101,17 @@ fi
 fi
 
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for pthread_create in -lpthread" >&5
+
+# Check whether --with-pthread was given.
+if test "${with_pthread+set}" = set; then :
+  withval=$with_pthread;
+else
+   with_pthread=yes
+fi
+
+
+if test "x$with_pthread" = "xyes"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for pthread_create in -lpthread" >&5
 $as_echo_n "checking for pthread_create in -lpthread... " >&6; }
 if ${ac_cv_lib_pthread_pthread_create+:} false; then :
   $as_echo_n "(cached) " >&6
@@ -6127,9 +6156,99 @@ _ACEOF
 
 fi
 
-if test "x$ac_cv_lib_pthread_pthread_create" = "xno"; then
+  if test "x$ac_cv_lib_pthread_pthread_create" = "xno"; then
     as_fn_error $? "pthread library is not found." "$LINENO" 5
+  fi
+else
+  RUNTIME_DEFS="$RUNTIME_DEFS -DWITHOUT_MULTITHREAD"
 fi
+
+
+# Check whether --with-massivethreads was given.
+if test "${with_massivethreads+set}" = set; then :
+  withval=$with_massivethreads;
+  case "x$withval" in
+    xno) ;;
+    xyes) ;;
+    *) CPPFLAGS="$CPPFLAGS -I$withval/include"
+       LDFLAGS="$LDFLAGS -L$withval/lib"
+       with_massivethreads=yes
+       ;;
+  esac
+
+else
+   with_massivethreads=yes
+fi
+
+
+if test "x$with_massivethreads" = "xyes"; then
+  if test "x$with_pthread" != "xyes"; then
+    as_fn_error $? "massivethreads requires pthread." "$LINENO" 5
+  fi
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for myth_create in -lmyth" >&5
+$as_echo_n "checking for myth_create in -lmyth... " >&6; }
+if ${ac_cv_lib_myth_myth_create+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lmyth  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char myth_create ();
+int
+main ()
+{
+return myth_create ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_myth_myth_create=yes
+else
+  ac_cv_lib_myth_myth_create=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_myth_myth_create" >&5
+$as_echo "$ac_cv_lib_myth_myth_create" >&6; }
+if test "x$ac_cv_lib_myth_myth_create" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_LIBMYTH 1
+_ACEOF
+
+  LIBS="-lmyth $LIBS"
+
+fi
+
+  if test "x$ac_cv_lib_myth_myth_create" = "xno"; then
+    as_fn_error $? "massivethreads library is not found." "$LINENO" 5
+  fi
+else
+  RUNTIME_DEFS="$RUNTIME_DEFS -DWITHOUT_MASSIVETHREADS"
+fi
+
+# Check whether --enable-concurrentgc was given.
+if test "${enable_concurrentgc+set}" = set; then :
+  enableval=$enable_concurrentgc;
+  if test "x$enableval" = "xno"; then
+    if "x$with_massivethreads" = "xyes"; then
+      as_fn_error $? "massivethreads support requires concurrent GC." "$LINENO" 5
+    fi
+    RUNTIME_DEFS="$RUNTIME_DEFS -DWITHOUT_CONCURRENCY"
+  fi
+
+fi
+
 
 for ac_header in stdatomic.h
 do :

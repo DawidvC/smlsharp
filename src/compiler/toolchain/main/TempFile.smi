@@ -1,9 +1,0 @@
-_require local "../../../basis.smi"
-_require "./Filename.smi"
-_require local "./CoreUtils.smi"
-
-structure TempFile =
-struct
-  val create : string -> Filename.filename
-  val cleanup : unit -> unit
-end

@@ -112,7 +112,7 @@ alloc_top(struct toplevels **ta)
 	return (*ta)->ary + ((*ta)->fill++);
 }
 
-tlv_alloc(struct toplevels *, toplevels, free);
+user_tlv_alloc(struct toplevels *, toplevels, free);
 
 /*
  * A linked list of garbage collection information.
@@ -344,7 +344,7 @@ tops_cmp(const void *p1, const void *p2)
 }
 
 static struct top *
-tsort_top(struct toplevels *ta)
+tsort_top(struct toplevels *ta, int allow_multiple_toplevel)
 {
 	struct top **tops, **adj, **adj_begin, *t, *t2;
 	struct top *sorted, *last;
@@ -404,7 +404,7 @@ tsort_top(struct toplevels *ta)
 	}
 	if (!sorted) {
 		sml_fatal(0, "no toplevel entry found; recompile all objects");
-	} else if (sorted->next) {
+	} else if (sorted->next && !allow_multiple_toplevel) {
 		sml_fatal(0, "multiple toplevel entries found; "
 			  "recompile objects relevant to the following: %s",
 			  module_name_list(sorted));
@@ -444,7 +444,10 @@ sml_register_top(const void *topfunc, const void *dependency,
 	struct toplevels *ta;
 	struct top *t;
 
-	ta = tlv_get_or_init(toplevels);
+	/* allocate current_mutator user_tlv as the first tls key. */
+	sml_control_init();
+
+	ta = user_tlv_get_or_init(toplevels);
 	if (!ta)
 		ta = alloc_toplevels();
 	t = alloc_top(&ta);
@@ -452,34 +455,56 @@ sml_register_top(const void *topfunc, const void *dependency,
 	t->dependency = dependency;
 	t->frametable = frametable;
 	t->root_offsets = root_offsets;
-	tlv_set(toplevels, ta);
+	user_tlv_set(toplevels, ta);
 }
 
 typedef void topfn(void);
 
+static struct {
+	uint64_t *ids;
+	unsigned int num_ids;
+} toplevel_ids;
+
+SML_PRIMITIVE int
+sml_toplevel_ids(uint64_t **ret_ids)
+{
+	*ret_ids = toplevel_ids.ids;
+	return toplevel_ids.num_ids;
+}
+
 void
-sml_run()
+sml_run(int allow_multiple_toplevel)
 {
 	struct toplevels *ta;
 	struct top *t;
 	struct gc_info *gi;
 	topfn **topfuncs, **p;
+	uint64_t *top_ids, *q;
 
-	ta = tlv_get_or_init(toplevels);
-	tlv_set(toplevels, NULL);
+	ta = user_tlv_get_or_init(toplevels);
+	user_tlv_set(toplevels, NULL);
 
-	t = tsort_top(ta);
+	t = tsort_top(ta, allow_multiple_toplevel);
 	gi = load_gc_info(ta);
 	register_gc_info(&gc_info_list, gi);
 
 	/* free toplevels to leave memory for user code as much as possible */
 	topfuncs = xmalloc(sizeof(topfuncs[0]) * (ta->fill + 1));
-	for (p = topfuncs; t; t = t->next, p++)
+	top_ids = xmalloc(sizeof(top_ids[0]) * ta->fill);
+	for (p = topfuncs, q = top_ids; t; t = t->next, p++, q++) {
 		*p = (topfn*)t->topfunc;
+		*q = t->dependency->top_id;
+	}
 	*p = NULL;
+	if (toplevel_ids.ids == NULL) {
+		toplevel_ids.ids = top_ids;
+		toplevel_ids.num_ids = ta->fill;
+	}
 	free(ta);
 
-	sml_run_toplevels(topfuncs);
+	for (p = topfuncs; *p; p++)
+		(*p)();
 
 	free(topfuncs);
+	free(top_ids);
 }
